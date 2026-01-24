@@ -5,6 +5,7 @@
 ## 功能特性
 
 - ✅ 每天自动执行签到
+- ✅ **自动登录获取 token**（无需手动设置 token）
 - ✅ 支持手动触发测试
 - ✅ 使用 TypeScript 编写
 - ✅ 部署在 Cloudflare Workers（免费额度充足）
@@ -29,24 +30,51 @@ zhejiangfc-checkin/
 npm install
 ```
 
-### 2. 配置 Token
+### 2. 配置登录信息
 
-有两种方式设置 TOKEN 环境变量：
+脚本支持两种方式获取 token：
 
-#### 方式一：使用 Wrangler CLI（推荐）
+#### 方式一：自动登录（推荐）✨
+
+使用用户名和密码自动登录获取 token，无需手动获取和更新 token。
+
+使用 Wrangler CLI 设置环境变量：
+
+```bash
+# 设置手机号
+npx wrangler secret put PHONE
+# 然后输入你的登录手机号（例如：15637697693）
+
+# 设置密码（原始密码，脚本会自动进行 MD5 哈希）
+npx wrangler secret put PASSWORD
+# 然后输入你的登录密码（原始密码，不是 MD5 哈希后的）
+```
+
+或者在 Cloudflare Dashboard 中设置：
+
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. 进入 Workers & Pages
+3. 选择你的 Worker
+4. 进入 Settings > Variables
+5. 添加环境变量：
+   - `PHONE`: 你的登录手机号（例如：15637697693）
+   - `PASSWORD`: 你的登录密码（原始密码，脚本会自动进行 MD5 哈希）
+
+**注意**：
+- 密码会自动进行 MD5 哈希处理，你只需要输入原始密码即可
+- 登录 API 已配置为实际的接口地址，无需修改
+- 如果登录失败，请检查手机号和密码是否正确
+
+#### 方式二：手动设置 Token（备选）
+
+如果你不想使用自动登录，也可以手动设置 TOKEN：
 
 ```bash
 npx wrangler secret put TOKEN
 # 然后输入你的 token 值
 ```
 
-#### 方式二：在 Cloudflare Dashboard 中设置
-
-1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)
-2. 进入 Workers & Pages
-3. 选择你的 Worker
-4. 进入 Settings > Variables
-5. 添加环境变量 `TOKEN`，值为你的 token
+如果同时设置了 TOKEN 和 USERNAME/PASSWORD，脚本会优先使用 TOKEN。
 
 ### 3. 配置定时任务
 
@@ -108,7 +136,28 @@ https://your-worker-name.your-subdomain.workers.dev
 }
 ```
 
-## 获取 Token
+## 技术说明
+
+### 登录 API 配置
+
+登录接口已配置为：
+- **URL**: `https://www.zhejiangfc1998.com/api/home/Login/doLogin`
+- **请求格式**: `{email: "", phone: "手机号", pwd: "MD5哈希后的密码"}`
+- **响应格式**: `{code: 1, msg: "登陆成功", data: {token: "..."}}`
+
+### MD5 哈希
+
+脚本使用 Node.js crypto 模块进行密码 MD5 哈希，需要在 `wrangler.toml` 中启用 `nodejs_compat` 兼容标志（已配置）。
+
+### 环境变量
+
+- `PHONE`: 登录手机号（必填，如果使用自动登录）
+- `PASSWORD`: 登录密码，原始密码（必填，如果使用自动登录）
+- `TOKEN`: 可选的 token（如果设置了则直接使用，跳过自动登录）
+
+## 获取 Token（手动方式，如不使用自动登录）
+
+如果使用手动设置 TOKEN 的方式：
 
 1. 登录 [浙江FC官网](https://www.zhejiangfc1998.com/)
 2. 打开浏览器开发者工具（F12）
@@ -118,10 +167,13 @@ https://your-worker-name.your-subdomain.workers.dev
 
 ## 注意事项
 
-1. **Token 有效期**：Token 可能会过期，如果签到失败，请检查 token 是否仍然有效
-2. **时区设置**：Cloudflare Workers 使用 UTC 时间，请根据你的需求调整 cron 时间
-3. **免费额度**：Cloudflare Workers 免费版每天有 100,000 次请求额度，对于每日签到完全够用
-4. **错误处理**：脚本包含基本的错误处理，但建议定期检查日志确保正常运行
+1. **自动登录**：使用自动登录功能时，每次签到前都会自动登录获取最新 token，无需担心 token 过期问题
+2. **密码处理**：密码会自动进行 MD5 哈希，你只需要输入原始密码即可
+3. **时区设置**：Cloudflare Workers 使用 UTC 时间，请根据你的需求调整 cron 时间
+4. **免费额度**：Cloudflare Workers 免费版每天有 100,000 次请求额度，对于每日签到完全够用
+5. **错误处理**：脚本包含基本的错误处理，但建议定期检查日志确保正常运行
+6. **安全性**：手机号和密码存储在 Cloudflare Workers 的环境变量中，使用加密存储，相对安全
+7. **Node.js 兼容性**：脚本使用了 Node.js crypto 模块，需要在 `wrangler.toml` 中启用 `nodejs_compat`（已配置）
 
 ## 开发
 
