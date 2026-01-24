@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    name: Lint and Type Check
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Type check
+        run: npx tsc --noEmit
+        
+      # 如果需要添加 linting，可以取消注释下面的行
+      # - name: Lint
+      #   run: npm run lint

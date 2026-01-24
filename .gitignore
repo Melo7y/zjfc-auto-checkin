@@ -1,7 +1,59 @@
+# Dependencies
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build outputs
 dist/
+build/
 .wrangler/
-*.log
-.DS_Store
+*.tsbuildinfo
+
+# Environment variables
 .env
 .env.local
+.env.*.local
+.dev.vars
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*~
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# TypeScript
+*.tsbuildinfo
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Misc
+*.pem
+*.key

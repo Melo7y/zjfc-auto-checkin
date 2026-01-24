@@ -8,6 +8,8 @@ interface Env {
   TOKEN?: string; // 可选的 token（如果设置了则直接使用，否则自动登录）
   PHONE?: string; // 登录手机号
   PASSWORD?: string; // 登录密码（原始密码，会自动进行 MD5 哈希）
+  RANDOM_DELAY_MIN?: string; // 随机延迟最小值（分钟），默认 0
+  RANDOM_DELAY_MAX?: string; // 随机延迟最大值（分钟），默认 3
 }
 
 interface LoginResponse {
@@ -19,17 +21,42 @@ interface LoginResponse {
   };
 }
 
+interface TokenPayload {
+  userId: number;
+  timestamp: number;
+  signature: string;
+}
+
 export default {
   /**
    * 定时任务处理器
    * 当 cron 触发时执行
+   * 支持随机延迟执行，避免固定时间触发
+   * 注意：延迟时间建议不超过 5 分钟，避免 Workers 执行超时
    */
   async scheduled(
     event: ScheduledEvent,
     env: Env,
     ctx: ExecutionContext
   ): Promise<void> {
-    ctx.waitUntil(handleCheckin(env));
+    // 添加随机延迟，模拟人工操作
+    // 延迟时间范围：0-3 分钟（可通过环境变量配置）
+    const delayMinutes = getRandomDelay(env);
+    
+    if (delayMinutes > 0) {
+      console.log(`随机延迟 ${delayMinutes} 分钟后执行签到`);
+      // 使用 waitUntil 异步执行，避免阻塞
+      ctx.waitUntil(
+        new Promise<void>(resolve => {
+          setTimeout(() => {
+            handleCheckin(env).finally(() => resolve());
+          }, delayMinutes * 60 * 1000);
+        })
+      );
+    } else {
+      // 无延迟，立即执行
+      ctx.waitUntil(handleCheckin(env));
+    }
   },
 
   /**
@@ -77,6 +104,25 @@ export default {
     return new Response('Method not allowed', { status: 405 });
   },
 };
+
+/**
+ * 获取随机延迟时间（分钟）
+ * 默认范围：0-3 分钟（8:00-8:03 之间执行）
+ * 可通过环境变量 RANDOM_DELAY_MIN 和 RANDOM_DELAY_MAX 自定义
+ */
+function getRandomDelay(env: Env): number {
+  const min = env.RANDOM_DELAY_MIN ? parseInt(env.RANDOM_DELAY_MIN, 10) : 0;
+  const max = env.RANDOM_DELAY_MAX ? parseInt(env.RANDOM_DELAY_MAX, 10) : 3;
+  
+  // 确保 min <= max
+  const actualMin = Math.min(min, max);
+  const actualMax = Math.max(min, max);
+  
+  // 生成随机整数（分钟）
+  const delayMinutes = Math.floor(Math.random() * (actualMax - actualMin + 1)) + actualMin;
+  
+  return delayMinutes;
+}
 
 /**
  * 处理签到逻辑
@@ -173,19 +219,45 @@ async function performLogin(phone: string, password: string): Promise<string> {
 }
 
 /**
+ * 从 token 中解析 user_id
+ */
+function getUserIdFromToken(token: string): number {
+  try {
+    // token 是 base64 编码的 JSON
+    const decoded = atob(token);
+    const payload: TokenPayload = JSON.parse(decoded);
+    return payload.userId;
+  } catch (error) {
+    console.error('解析 token 失败:', error);
+    throw new Error('无法从 token 中解析 user_id');
+  }
+}
+
+/**
  * 执行签到请求
  */
 async function performCheckin(token: string): Promise<any> {
-  const url = 'https://www.zhejiangfc1998.com/api/home/User/getRedNews';
+  const url = 'https://www.zhejiangfc1998.com/api/home/signin/continuous';
+
+  // 从 token 中解析 user_id
+  const userId = getUserIdFromToken(token);
+
+  // 请求体格式：{user_id: 用户ID}
+  const checkinData = {
+    user_id: userId,
+  };
 
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Accept': 'application/json, text/plain, */*',
+      'Content-Type': 'application/json',
       'token': token,
       'Referer': 'https://www.zhejiangfc1998.com/center/sign',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Origin': 'https://www.zhejiangfc1998.com',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
     },
+    body: JSON.stringify(checkinData),
   });
 
   if (!response.ok) {
@@ -193,11 +265,19 @@ async function performCheckin(token: string): Promise<any> {
     throw new Error(`签到请求失败! status: ${response.status}, response: ${errorText}`);
   }
 
-  const data = await response.json();
+  const data: any = await response.json();
   
-  // 如果返回错误码，抛出错误
-  if (data.code && data.code !== 200 && data.code !== 0) {
-    throw new Error(`签到失败: ${data.msg || data.message || '未知错误'}`);
+  // 检查响应码
+  // 常见的成功码：1（登录API使用）, 200, 0
+  // 如果 code 存在且不是成功码，抛出错误
+  if (data.code !== undefined) {
+    // code: 1, 200, 0 都视为成功
+    if (data.code === 1 || data.code === 200 || data.code === 0) {
+      console.log('签到成功，响应码:', data.code, '消息:', data.msg || data.message);
+    } else {
+      // 非成功码，抛出错误
+      throw new Error(`签到失败: ${data.msg || data.message || '未知错误'} (code: ${data.code})`);
+    }
   }
 
   return data;

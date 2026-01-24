@@ -1,16 +1,21 @@
 # 浙江FC会员自动签到脚本
 
-这是一个基于 Cloudflare Workers 的自动签到脚本，每天定时执行浙江FC会员签到。
+这是一个基于 Cloudflare Workers 的自动签到脚本，每天定时执行浙江FC会员签到。支持自动登录获取 token，无需手动维护 token。
 
-## 功能特性
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue.svg)](https://www.typescriptlang.org/)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange.svg)](https://workers.cloudflare.com/)
 
-- ✅ 每天自动执行签到
-- ✅ **自动登录获取 token**（无需手动设置 token）
-- ✅ 支持手动触发测试
-- ✅ 使用 TypeScript 编写
-- ✅ 部署在 Cloudflare Workers（免费额度充足）
+## ✨ 功能特性
 
-## 项目结构
+- ✅ **自动登录**：每次签到前自动登录获取最新 token，无需担心 token 过期
+- ✅ **定时执行**：支持 Cron 定时任务，每天自动签到
+- ✅ **手动触发**：支持通过 HTTP 请求手动触发签到测试
+- ✅ **密码加密**：自动对密码进行 MD5 哈希处理
+- ✅ **TypeScript**：使用 TypeScript 编写，类型安全
+- ✅ **免费部署**：部署在 Cloudflare Workers，免费额度充足
+
+## 📁 项目结构
 
 ```
 zhejiangfc-checkin/
@@ -19,51 +24,74 @@ zhejiangfc-checkin/
 ├── package.json          # 项目依赖配置
 ├── wrangler.toml         # Cloudflare Workers 配置
 ├── tsconfig.json         # TypeScript 配置
+├── .gitignore           # Git 忽略文件
 └── README.md             # 项目说明文档
 ```
 
-## 快速开始
+## 🚀 快速开始
 
-### 1. 安装依赖
+### 前置要求
+
+- Node.js 18+ 
+- Cloudflare 账号（[免费注册](https://dash.cloudflare.com/sign-up)）
+
+### 5分钟快速部署
+
+```bash
+# 1. 安装依赖
+npm install
+
+# 2. 登录 Cloudflare（首次需要）
+npx wrangler login
+
+# 3. 设置环境变量
+npx wrangler secret put PHONE    # 输入你的手机号
+npx wrangler secret put PASSWORD # 输入你的原始密码
+
+# 4. 部署
+npm run deploy
+```
+
+完成！脚本已部署到 Cloudflare Workers，每天会自动执行签到。
+
+## 📖 详细部署步骤
+
+### 步骤 1: 安装依赖
 
 ```bash
 npm install
 ```
 
-### 2. 配置登录信息
+### 步骤 2: 登录 Cloudflare
 
-脚本支持两种方式获取 token：
+首次使用需要授权 Wrangler 访问你的 Cloudflare 账号：
+
+```bash
+npx wrangler login
+```
+
+这会打开浏览器，点击授权即可。
+
+### 步骤 3: 配置环境变量
 
 #### 方式一：自动登录（推荐）✨
 
-使用用户名和密码自动登录获取 token，无需手动获取和更新 token。
-
-使用 Wrangler CLI 设置环境变量：
+使用手机号和密码自动登录，脚本会自动获取 token：
 
 ```bash
 # 设置手机号
 npx wrangler secret put PHONE
-# 然后输入你的登录手机号（例如：15637697693）
+# 输入提示后，输入你的手机号（例如：15637697693）
 
-# 设置密码（原始密码，脚本会自动进行 MD5 哈希）
+# 设置密码
 npx wrangler secret put PASSWORD
-# 然后输入你的登录密码（原始密码，不是 MD5 哈希后的）
+# 输入提示后，输入你的原始密码（脚本会自动进行 MD5 哈希）
 ```
 
-或者在 Cloudflare Dashboard 中设置：
-
-1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)
-2. 进入 Workers & Pages
-3. 选择你的 Worker
-4. 进入 Settings > Variables
-5. 添加环境变量：
-   - `PHONE`: 你的登录手机号（例如：15637697693）
-   - `PASSWORD`: 你的登录密码（原始密码，脚本会自动进行 MD5 哈希）
-
 **注意**：
-- 密码会自动进行 MD5 哈希处理，你只需要输入原始密码即可
-- 登录 API 已配置为实际的接口地址，无需修改
-- 如果登录失败，请检查手机号和密码是否正确
+- 密码输入时不会显示（安全特性）
+- 输入原始密码即可，脚本会自动进行 MD5 哈希处理
+- 这些密钥会加密存储在 Cloudflare 中
 
 #### 方式二：手动设置 Token（备选）
 
@@ -71,47 +99,70 @@ npx wrangler secret put PASSWORD
 
 ```bash
 npx wrangler secret put TOKEN
-# 然后输入你的 token 值
+# 输入你的 token 值
 ```
 
-如果同时设置了 TOKEN 和 USERNAME/PASSWORD，脚本会优先使用 TOKEN。
+如果同时设置了 TOKEN 和 PHONE/PASSWORD，脚本会优先使用 TOKEN。
 
-### 3. 配置定时任务
+### 步骤 4: 配置定时任务（可选）
 
-编辑 `wrangler.toml` 文件中的 `triggers.cron` 来设置执行时间：
+编辑 `wrangler.toml` 文件，修改 cron 表达式：
 
 ```toml
-triggers = { cron = ["0 0 * * *"] }  # 每天 UTC 0:00（北京时间 8:00）
+# 默认：每天 UTC 0:00（北京时间 8:00）
+# 代码会自动添加 0-3 分钟的随机延迟，实际执行时间在 8:00-8:03 之间随机
+[triggers]
+crons = ["0 0 * * *"]
 ```
 
-Cron 格式说明：
-- `0 0 * * *` - 每天 UTC 0:00
-- `0 8 * * *` - 每天 UTC 8:00（北京时间 16:00）
-- `0 0 * * 1` - 每周一 UTC 0:00
+**常用时间配置**：
 
-**注意**：Cloudflare Workers 使用 UTC 时间，北京时间 = UTC + 8
+| Cron 表达式 | 说明 | 北京时间 |
+|------------|------|---------|
+| `0 0 * * *` | 每天 0:00 | 每天 8:00-8:03（随机） |
+| `0 8 * * *` | 每天 8:00 | 每天 16:00-16:03（随机） |
+| `0 0 * * 1` | 每周一 0:00 | 每周一 8:00-8:03（随机） |
 
-### 4. 本地测试
+**时区说明**：Cloudflare Workers 使用 UTC 时间，北京时间 = UTC + 8
+
+**随机延迟**：
+- 默认在 cron 时间后随机延迟 0-3 分钟执行（8:00-8:03 之间随机）
+- 可通过环境变量自定义延迟范围：
+  ```bash
+  npx wrangler secret put RANDOM_DELAY_MIN  # 最小延迟（分钟），默认 0
+  npx wrangler secret put RANDOM_DELAY_MAX  # 最大延迟（分钟），默认 3
+  ```
+- 例如：设置 `RANDOM_DELAY_MIN=5` 和 `RANDOM_DELAY_MAX=15`，则会在 8:05-8:15 之间随机执行
+
+### 步骤 5: 本地测试（推荐）
+
+在部署前先本地测试：
 
 ```bash
 npm run dev
 ```
 
-然后在浏览器访问 `http://localhost:8787` 来手动触发签到测试。
+**创建本地环境变量文件** `.dev.vars`：
 
-### 5. 部署到 Cloudflare Workers
+```
+PHONE=你的手机号
+PASSWORD=你的密码
+```
+
+然后在浏览器访问 `http://localhost:8787` 测试。
+
+### 步骤 6: 部署到 Cloudflare
 
 ```bash
 npm run deploy
 ```
 
-首次部署需要登录 Cloudflare：
-
-```bash
-npx wrangler login
+部署成功后，你会看到 Worker URL，例如：
+```
+https://zhejiangfc-checkin.your-subdomain.workers.dev
 ```
 
-## 使用方法
+## 🎯 使用方法
 
 ### 自动签到
 
@@ -119,7 +170,7 @@ npx wrangler login
 
 ### 手动触发
 
-部署后，你可以通过访问 Worker 的 URL 来手动触发签到：
+访问你的 Worker URL 来手动触发签到：
 
 ```
 https://your-worker-name.your-subdomain.workers.dev
@@ -136,46 +187,75 @@ https://your-worker-name.your-subdomain.workers.dev
 }
 ```
 
-## 技术说明
+### 查看日志
 
-### 登录 API 配置
+```bash
+npx wrangler tail
+```
 
-登录接口已配置为：
+这会实时显示 Worker 的执行日志，包括登录和签到的详细信息。
+
+## ⚙️ 配置说明
+
+### 环境变量
+
+| 变量名 | 说明 | 必填 | 示例 |
+|--------|------|------|------|
+| `PHONE` | 登录手机号 | 是（自动登录时） | `15637697693` |
+| `PASSWORD` | 登录密码（原始密码） | 是（自动登录时） | `yourpassword` |
+| `TOKEN` | 手动设置的 token | 否 | `eyJ1c2VySWQ...` |
+| `RANDOM_DELAY_MIN` | 随机延迟最小值（分钟） | 否 | `0`（默认） |
+| `RANDOM_DELAY_MAX` | 随机延迟最大值（分钟） | 否 | `3`（默认） |
+
+### 更新环境变量
+
+```bash
+# 更新手机号
+npx wrangler secret put PHONE
+
+# 更新密码
+npx wrangler secret put PASSWORD
+
+# 删除环境变量
+npx wrangler secret delete PHONE
+```
+
+### 通过 Dashboard 配置
+
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. 进入 **Workers & Pages** > 选择你的 Worker
+3. 进入 **Settings** > **Variables**
+4. 添加或修改环境变量
+
+**注意**：Dashboard 中的环境变量是明文存储的，使用 `wrangler secret put` 更安全（加密存储）。
+
+## 🔧 技术说明
+
+### 登录 API
+
 - **URL**: `https://www.zhejiangfc1998.com/api/home/Login/doLogin`
 - **请求格式**: `{email: "", phone: "手机号", pwd: "MD5哈希后的密码"}`
 - **响应格式**: `{code: 1, msg: "登陆成功", data: {token: "..."}}`
+
+### 签到 API
+
+- **URL**: `https://www.zhejiangfc1998.com/api/home/User/getRedNews`
+- **方法**: POST
+- **Headers**: `token: "..."`
 
 ### MD5 哈希
 
 脚本使用 Node.js crypto 模块进行密码 MD5 哈希，需要在 `wrangler.toml` 中启用 `nodejs_compat` 兼容标志（已配置）。
 
-### 环境变量
+### Node.js 兼容性
 
-- `PHONE`: 登录手机号（必填，如果使用自动登录）
-- `PASSWORD`: 登录密码，原始密码（必填，如果使用自动登录）
-- `TOKEN`: 可选的 token（如果设置了则直接使用，跳过自动登录）
+项目使用了 Node.js crypto 模块，需要在 `wrangler.toml` 中配置：
 
-## 获取 Token（手动方式，如不使用自动登录）
+```toml
+compatibility_flags = ["nodejs_compat"]
+```
 
-如果使用手动设置 TOKEN 的方式：
-
-1. 登录 [浙江FC官网](https://www.zhejiangfc1998.com/)
-2. 打开浏览器开发者工具（F12）
-3. 进入签到页面：https://www.zhejiangfc1998.com/center/sign
-4. 在 Network 标签中找到 `getRedNews` 请求
-5. 复制请求头中的 `token` 值
-
-## 注意事项
-
-1. **自动登录**：使用自动登录功能时，每次签到前都会自动登录获取最新 token，无需担心 token 过期问题
-2. **密码处理**：密码会自动进行 MD5 哈希，你只需要输入原始密码即可
-3. **时区设置**：Cloudflare Workers 使用 UTC 时间，请根据你的需求调整 cron 时间
-4. **免费额度**：Cloudflare Workers 免费版每天有 100,000 次请求额度，对于每日签到完全够用
-5. **错误处理**：脚本包含基本的错误处理，但建议定期检查日志确保正常运行
-6. **安全性**：手机号和密码存储在 Cloudflare Workers 的环境变量中，使用加密存储，相对安全
-7. **Node.js 兼容性**：脚本使用了 Node.js crypto 模块，需要在 `wrangler.toml` 中启用 `nodejs_compat`（已配置）
-
-## 开发
+## 📝 开发
 
 ### 本地开发
 
@@ -183,12 +263,87 @@ https://your-worker-name.your-subdomain.workers.dev
 npm run dev
 ```
 
+访问 `http://localhost:8787` 进行测试。
+
 ### 查看日志
 
 ```bash
+# 实时日志
 npx wrangler tail
+
+# 格式化日志
+npx wrangler tail --format pretty
 ```
 
-## 许可证
+### 更新代码
+
+修改代码后：
+
+```bash
+npm run deploy
+```
+
+## ❓ 常见问题
+
+### Q: 部署失败，提示 "Authentication error"
+
+**解决方案**：
+```bash
+npx wrangler login
+```
+重新登录 Cloudflare。
+
+### Q: 提示 "Cannot find module 'node:crypto'"
+
+**解决方案**：
+确保 `wrangler.toml` 中有：
+```toml
+compatibility_flags = ["nodejs_compat"]
+```
+
+### Q: 本地测试失败，提示环境变量未设置
+
+**解决方案**：
+创建 `.dev.vars` 文件：
+```
+PHONE=你的手机号
+PASSWORD=你的密码
+```
+
+### Q: 登录失败，提示 "登录失败: xxx"
+
+**可能原因**：
+1. 手机号或密码错误
+2. 账号被锁定
+3. API 接口变更
+
+**解决方案**：
+1. 检查手机号和密码是否正确
+2. 尝试在浏览器中手动登录确认账号正常
+3. 查看日志获取详细错误信息：`npx wrangler tail`
+
+### Q: 定时任务没有执行
+
+**检查步骤**：
+1. 确认 cron 配置正确：`cat wrangler.toml | grep cron`
+2. 在 Dashboard 中检查：Workers & Pages > 你的 Worker > Triggers
+3. 查看日志：`npx wrangler tail`
+4. 注意时区：Cloudflare 使用 UTC 时间
+
+### Q: 免费额度够用吗？
+
+**Cloudflare Workers 免费版限制**：
+- 每天 100,000 次请求
+- 每次请求 CPU 时间限制：10ms（免费版）
+
+**对于签到脚本**：
+- 每天执行 1-2 次（登录 + 签到）
+- 完全在免费额度内
+
+## 📄 许可证
 
 MIT
+
+## 🙏 致谢
+
+感谢 Cloudflare Workers 提供的免费服务。
