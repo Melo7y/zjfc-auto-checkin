@@ -4,21 +4,14 @@
  * 支持自动登录获取 token
  */
 
+import { ApiError, ApiResponse, describeError, isObject, requestApi, sleep } from './api';
+
 interface Env {
   TOKEN?: string; // 可选的 token（如果设置了则直接使用，否则自动登录）
   PHONE?: string; // 登录手机号
   PASSWORD?: string; // 登录密码（原始密码，会自动进行 MD5 哈希）
   RANDOM_DELAY_MIN?: string; // 随机延迟最小值（分钟），默认 0
   RANDOM_DELAY_MAX?: string; // 随机延迟最大值（分钟），默认 3
-}
-
-interface LoginResponse {
-  code: number;
-  msg: string;
-  data: {
-    token: string;
-    [key: string]: any;
-  };
 }
 
 interface TokenPayload {
@@ -32,31 +25,30 @@ export default {
    * 定时任务处理器
    * 当 cron 触发时执行
    * 支持随机延迟执行，避免固定时间触发
-   * 注意：延迟时间建议不超过 5 分钟，避免 Workers 执行超时
+   * 最多延迟 10 分钟，为请求超时和登录重试留出执行时间
    */
   async scheduled(
     event: ScheduledEvent,
     env: Env,
     ctx: ExecutionContext
   ): Promise<void> {
-    // 添加随机延迟，模拟人工操作
-    // 延迟时间范围：0-3 分钟（可通过环境变量配置）
-    const delayMinutes = getRandomDelay(env);
-    
-    if (delayMinutes > 0) {
-      console.log(`随机延迟 ${delayMinutes} 分钟后执行签到`);
-      // 使用 waitUntil 异步执行，避免阻塞
-      ctx.waitUntil(
-        new Promise<void>(resolve => {
-          setTimeout(() => {
-            handleCheckin(env).finally(() => resolve());
-          }, delayMinutes * 60 * 1000);
-        })
-      );
-    } else {
-      // 无延迟，立即执行
-      ctx.waitUntil(handleCheckin(env));
-    }
+    ctx.waitUntil((async () => {
+      try {
+        const delayMinutes = getRandomDelay(env);
+        console.log('定时签到开始:', JSON.stringify({
+          cron: event.cron,
+          scheduledTime: event.scheduledTime,
+          delayMinutes,
+        }));
+        if (delayMinutes > 0) await sleep(delayMinutes * 60 * 1000);
+        await handleCheckin(env);
+      } catch (error) {
+        // 显式序列化 message，避免日志只保留 Error 的调用栈。
+        console.error('签到失败:', JSON.stringify(describeError(error)));
+        // 将失败传给 waitUntil，让 Cron Past Events 记录真实结果。
+        throw error;
+      }
+    })());
   },
 
   /**
@@ -67,9 +59,7 @@ export default {
     // 如果是 GET 请求，执行签到并返回结果
     if (request.method === 'GET') {
       try {
-        // 获取 token（优先使用环境变量，否则自动登录）
-        const token = await getToken(env);
-        const result = await performCheckin(token);
+        const result = await handleCheckin(env);
         return new Response(
           JSON.stringify({
             success: true,
@@ -84,6 +74,7 @@ export default {
           }
         );
       } catch (error) {
+        console.error('签到失败:', JSON.stringify(describeError(error)));
         return new Response(
           JSON.stringify({
             success: false,
@@ -111,8 +102,16 @@ export default {
  * 可通过环境变量 RANDOM_DELAY_MIN 和 RANDOM_DELAY_MAX 自定义
  */
 function getRandomDelay(env: Env): number {
-  const min = env.RANDOM_DELAY_MIN ? parseInt(env.RANDOM_DELAY_MIN, 10) : 0;
-  const max = env.RANDOM_DELAY_MAX ? parseInt(env.RANDOM_DELAY_MAX, 10) : 3;
+  const parseDelay = (value: string | undefined, fallback: number): number => {
+    const delay = value ? Number(value) : fallback;
+    if (!Number.isInteger(delay) || delay < 0) {
+      throw new ApiError('随机延迟必须是非负整数（分钟）', { stage: 'config', kind: 'config' });
+    }
+    if (delay > 10) console.warn('随机延迟超过 10 分钟，已限制为 10 分钟');
+    return Math.min(delay, 10);
+  };
+  const min = parseDelay(env.RANDOM_DELAY_MIN, 0);
+  const max = parseDelay(env.RANDOM_DELAY_MAX, 3);
   
   // 确保 min <= max
   const actualMin = Math.min(min, max);
@@ -127,16 +126,11 @@ function getRandomDelay(env: Env): number {
 /**
  * 处理签到逻辑
  */
-async function handleCheckin(env: Env): Promise<void> {
-  try {
-    // 获取 token（优先使用环境变量，否则自动登录）
-    const token = await getToken(env);
-    const result = await performCheckin(token);
-    console.log('签到成功:', JSON.stringify(result));
-  } catch (error) {
-    console.error('签到失败:', error);
-    // 可以在这里添加错误通知逻辑，比如发送到监控服务
-  }
+async function handleCheckin(env: Env): Promise<ApiResponse> {
+  const token = await getToken(env);
+  const result = await performCheckin(token);
+  console.log('签到成功:', JSON.stringify({ code: result.code }));
+  return result;
 }
 
 /**
@@ -151,7 +145,9 @@ async function getToken(env: Env): Promise<string> {
 
   // 否则自动登录获取 token
   if (!env.PHONE || !env.PASSWORD) {
-    throw new Error('请设置 PHONE 和 PASSWORD 环境变量，或设置 TOKEN 环境变量');
+    throw new ApiError('请设置 PHONE 和 PASSWORD 环境变量，或设置 TOKEN 环境变量', {
+      stage: 'config', kind: 'config',
+    });
   }
 
   console.log('开始自动登录...');
@@ -186,7 +182,7 @@ async function performLogin(phone: string, password: string): Promise<string> {
     pwd: passwordHash,
   };
 
-  const response = await fetch(loginUrl, {
+  const data = await requestApi('login', loginUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -195,24 +191,13 @@ async function performLogin(phone: string, password: string): Promise<string> {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     },
     body: JSON.stringify(loginData),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`登录请求失败! status: ${response.status}, response: ${errorText}`);
-  }
-
-  const data: LoginResponse = await response.json();
-
-  // 检查登录是否成功（code === 1 表示成功）
-  if (data.code !== 1) {
-    throw new Error(`登录失败: ${data.msg || '未知错误'}`);
-  }
+  }, { maxAttempts: 3, sensitiveValues: [phone, password, passwordHash] });
 
   // 从 data.data.token 获取 token
-  if (!data.data?.token) {
-    console.error('登录响应:', JSON.stringify(data));
-    throw new Error('登录成功但未找到 token');
+  if (!isObject(data.data) || typeof data.data.token !== 'string' || !data.data.token.trim()) {
+    throw new ApiError('登录成功但未找到有效 token', {
+      stage: 'login', kind: 'invalid_response', apiCode: data.code,
+    });
   }
 
   return data.data.token;
@@ -226,17 +211,19 @@ function getUserIdFromToken(token: string): number {
     // token 是 base64 编码的 JSON
     const decoded = atob(token);
     const payload: TokenPayload = JSON.parse(decoded);
+    if (!Number.isSafeInteger(payload?.userId) || payload.userId <= 0) {
+      throw new Error('Invalid userId');
+    }
     return payload.userId;
-  } catch (error) {
-    console.error('解析 token 失败:', error);
-    throw new Error('无法从 token 中解析 user_id');
+  } catch {
+    throw new ApiError('无法从 token 中解析有效 user_id', { stage: 'token', kind: 'invalid_response' });
   }
 }
 
 /**
  * 执行签到请求
  */
-async function performCheckin(token: string): Promise<any> {
+async function performCheckin(token: string): Promise<ApiResponse> {
   const url = 'https://www.zhejiangfc1998.com/api/home/signin/continuous';
 
   // 从 token 中解析 user_id
@@ -247,7 +234,7 @@ async function performCheckin(token: string): Promise<any> {
     user_id: userId,
   };
 
-  const response = await fetch(url, {
+  return requestApi('checkin', url, {
     method: 'POST',
     headers: {
       'Accept': 'application/json, text/plain, */*',
@@ -258,27 +245,5 @@ async function performCheckin(token: string): Promise<any> {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
     },
     body: JSON.stringify(checkinData),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`签到请求失败! status: ${response.status}, response: ${errorText}`);
-  }
-
-  const data: any = await response.json();
-  
-  // 检查响应码
-  // 常见的成功码：1（登录API使用）, 200, 0
-  // 如果 code 存在且不是成功码，抛出错误
-  if (data.code !== undefined) {
-    // code: 1, 200, 0 都视为成功
-    if (data.code === 1 || data.code === 200 || data.code === 0) {
-      console.log('签到成功，响应码:', data.code, '消息:', data.msg || data.message);
-    } else {
-      // 非成功码，抛出错误
-      throw new Error(`签到失败: ${data.msg || data.message || '未知错误'} (code: ${data.code})`);
-    }
-  }
-
-  return data;
+  }, { sensitiveValues: [token] });
 }

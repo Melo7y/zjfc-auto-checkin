@@ -9,6 +9,7 @@ pnpm-debug.log*
 dist/
 build/
 .wrangler/
+.test-build/
 *.tsbuildinfo
 
 # Environment variables

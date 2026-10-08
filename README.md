@@ -9,6 +9,7 @@
 ## ✨ 功能特性
 
 - ✅ **自动登录**：每次签到前自动登录获取最新 token，无需担心 token 过期
+- ✅ **登录容错**：20 秒请求超时，网络异常、HTTP 408/429/5xx 最多尝试 3 次
 - ✅ **定时执行**：支持 Cron 定时任务，每天自动签到
 - ✅ **手动触发**：支持通过 HTTP 请求手动触发签到测试
 - ✅ **密码加密**：自动对密码进行 MD5 哈希处理
@@ -20,7 +21,10 @@
 ```
 zhejiangfc-checkin/
 ├── src/
-│   └── index.ts          # 主程序文件
+│   ├── index.ts          # 主程序文件
+│   └── api.ts            # 请求超时、登录重试和错误诊断
+├── tests/
+│   └── worker.test.cjs   # Worker 流程回归测试
 ├── package.json          # 项目依赖配置
 ├── wrangler.toml         # Cloudflare Workers 配置
 ├── tsconfig.json         # TypeScript 配置
@@ -132,7 +136,8 @@ crons = ["0 0 * * *"]
   npx wrangler secret put RANDOM_DELAY_MIN  # 最小延迟（分钟），默认 0
   npx wrangler secret put RANDOM_DELAY_MAX  # 最大延迟（分钟），默认 3
   ```
-- 例如：设置 `RANDOM_DELAY_MIN=5` 和 `RANDOM_DELAY_MAX=15`，则会在 8:05-8:15 之间随机执行
+- 例如：设置 `RANDOM_DELAY_MIN=5` 和 `RANDOM_DELAY_MAX=10`，则会在 8:05-8:10 之间随机执行
+- 延迟必须是非负整数，超过 10 分钟会限制为 10 分钟，为接口超时与登录重试保留执行时间
 
 ### 步骤 5: 本地测试（推荐）
 
@@ -195,6 +200,14 @@ npx wrangler tail
 
 这会实时显示 Worker 的执行日志，包括登录和签到的详细信息。
 
+失败日志显式记录 `message`、`stage`、`kind`、`httpStatus`、`apiCode`、`attempt` 和 `durationMs`（字段按实际失败情况提供）。例如：
+
+```json
+{"name":"ApiError","message":"登录请求失败 (HTTP 502)","stage":"login","kind":"http","httpStatus":502,"attempt":3,"maxAttempts":3,"durationMs":230}
+```
+
+`stage` 区分登录、签到、Token 解析和配置问题，`kind` 区分 HTTP 错误、网络异常、超时、响应格式异常和业务错误。日志不输出原始响应体或 Token，错误消息会遮蔽本次请求使用的手机号、密码、密码哈希或 Token。Cron 失败会传递给 `waitUntil`，让 Cloudflare 的 Past Events 记录失败结果。
+
 ## ⚙️ 配置说明
 
 ### 环境变量
@@ -239,9 +252,19 @@ npx wrangler secret delete PHONE
 
 ### 签到 API
 
-- **URL**: `https://www.zhejiangfc1998.com/api/home/User/getRedNews`
+- **URL**: `https://www.zhejiangfc1998.com/api/home/signin/continuous`
 - **方法**: POST
 - **Headers**: `token: "..."`
+- **请求格式**: `{user_id: 用户ID}`
+- **成功码**: `code: 1`（与官网页面一致）
+
+### 超时与重试
+
+- 登录和签到每次请求最多等待 20 秒，包含读取响应体的时间。
+- 登录遇到网络异常、超时或 HTTP 408/429/5xx 时，最多尝试 3 次；重试间隔为约 2 秒、4 秒，并添加随机抖动。
+- 响应携带 `Retry-After` 时遵守该等待时间；如果超过 30 秒，结束本次任务并报告错误，避免提前重试。
+- 手机号或密码错误等业务失败、HTTP 403、无效 JSON 响应直接报告错误。
+- 签到 POST 只发送一次。请求超时时服务端可能已经完成签到，未经幂等性确认不自动重复发送。
 
 ### MD5 哈希
 
@@ -282,6 +305,22 @@ npx wrangler tail --format pretty
 ```bash
 npm run deploy
 ```
+
+如果线上 Worker 使用了其他名称，应明确指定该名称，避免部署到另一个 Worker。例如运行日志中的 `zjfc-zfk`：
+
+```bash
+npx wrangler deploy --name zjfc-zfk
+```
+
+### 验证修改
+
+```bash
+npm run typecheck
+npm test
+npx wrangler deploy --dry-run
+```
+
+回归测试模拟上游响应和计时器，不会登录真实账户或执行真实签到。测试运行环境需要支持 Node.js 的 `node:test` MockTimers（建议 Node.js 22+）。
 
 ## ❓ 常见问题
 
